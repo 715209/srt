@@ -254,6 +254,7 @@ struct CSrtConfig: CSrtMuxerConfig
     int      iRcvLatency;   // Agent's Rx latency
     int      iPeerLatency;  // Peer's Rx latency for the traffic made by Agent's Tx.
     bool     bTLPktDrop;    // Whether Agent WILL DO TLPKTDROP on Rx.
+    bool     bSrtLa;        // Enable SRTLA-specific behavior toggles.
     int      iSndDropDelay; // Extra delay when deciding to snd-drop for TLPKTDROP, -1 to off
     bool     bEnforcedEnc;  // Off by default. When on, any connection other than nopw-nopw & pw1-pw1 is rejected.
     int      iGroupConnect;    // 1 - allow group connections
@@ -309,6 +310,7 @@ struct CSrtConfig: CSrtMuxerConfig
         , iRcvLatency(SRT_LIVE_DEF_LATENCY_MS)
         , iPeerLatency(0)
         , bTLPktDrop(true)
+        , bSrtLa(false)
         , iSndDropDelay(0)
         , bEnforcedEnc(true)
         , iGroupConnect(0)

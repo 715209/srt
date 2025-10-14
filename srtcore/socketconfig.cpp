@@ -416,6 +416,14 @@ struct CSrtConfigSetter<SRTO_TLPKTDROP>
     }
 };
 template<>
+struct CSrtConfigSetter<SRTO_SRTLA>
+{
+    static void set(CSrtConfig& co, const void* optval, int optlen)
+    {
+        co.bSrtLa = cast_optval<bool>(optval, optlen);
+    }
+};
+template<>
 struct CSrtConfigSetter<SRTO_SNDDROPDELAY>
 {
     static void set(CSrtConfig& co, const void* optval, int optlen)
@@ -955,6 +963,7 @@ int dispatchSet(SRT_SOCKOPT optName, CSrtConfig& co, const void* optval, int opt
         DISPATCH(SRTO_RCVLATENCY);
         DISPATCH(SRTO_PEERLATENCY);
         DISPATCH(SRTO_TLPKTDROP);
+        DISPATCH(SRTO_SRTLA);
         DISPATCH(SRTO_SNDDROPDELAY);
         DISPATCH(SRTO_PASSPHRASE);
         DISPATCH(SRTO_PBKEYLEN);
@@ -1077,6 +1086,7 @@ bool SRT_SocketOptionObject::add(SRT_SOCKOPT optname, const void* optval, size_t
     case SRTO_SNDBUF:
     case SRTO_SNDDROPDELAY:
         //SRTO_TLPKTDROP - per transmission setting
+    case SRTO_SRTLA:
         //SRTO_TSBPDMODE - per transmission setting
     case SRTO_UDP_RCVBUF:
     case SRTO_UDP_SNDBUF:
