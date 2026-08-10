@@ -1251,7 +1251,7 @@ void srt::CRcvQueue::init(int qsize, size_t payload, int version, int hsize, CCh
     }
 }
 
-void* srt::CRcvQueue::worker(void* param)
+void* srt::CRcvQueue::worker(void* param) ATR_NOEXCEPT
 {
     CRcvQueue*   self = (CRcvQueue*)param;
     sockaddr_any sa(self->getIPversion());
@@ -1328,7 +1328,11 @@ void* srt::CRcvQueue::worker(void* param)
                          << "CChannel reported ERROR DURING TRANSMISSION - IPE. INTERRUPTING worker anyway.");
             }
             cst = CONN_REJECT;
-            break;
+
+            // DO NOT interrupt though - the worker thread must run until all
+            // sockets are removed from the multiplexer. Alternatively you can forcefully
+            // remove all sockets from the receive U list.
+            continue;
         }
         // OTHERWISE: this is an "AGAIN" situation. No data was read, but the process should continue.
 
@@ -1350,10 +1354,7 @@ void* srt::CRcvQueue::worker(void* param)
             {
                 HLOGC(qrlog.Debug,
                       log << CUDTUnited::CONID(u->m_SocketID) << " SOCKET broken, REMOVING FROM RCV QUEUE/MAP.");
-                // the socket must be removed from Hash table first, then RcvUList
-                self->m_pHash->remove(u->m_SocketID);
-                self->m_pRcvUList->remove(u);
-                u->m_pRNode->m_bOnList = false;
+                self->removeFromLists(u);
             }
 
             ul = self->m_pRcvUList->m_pUList;
@@ -1559,7 +1560,7 @@ srt::EConnectStatus srt::CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUni
         // side just started sending its handshake packets, the local side has already
         // run the CRcvQueue::worker thread, and this worker thread is trying to dispatch
         // the handshake packet too early, before the dispatcher has a chance to see
-        // this socket registerred in the RendezvousQueue, which causes the packet unable
+        // this socket registered in the RendezvousQueue, which causes the packet unable
         // to be dispatched. Therefore simply treat every "out of band" packet (with socket
         // not belonging to the connection and not registered as rendezvous) as "possible
         // attack" and ignore it. This also should better protect the rendezvous socket
@@ -1620,7 +1621,7 @@ srt::EConnectStatus srt::CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUni
             // that we KNOW (by the cst == CONN_ACCEPT result) that the socket should be inserted
             // into the pending anteroom.
 
-            CUDT* ne = getNewEntry(); // This function actuall removes the entry and returns it.
+            CUDT* ne = getNewEntry(); // This function actually removes the entry and returns it.
             // This **should** now always return a non-null value, but check it first
             // because if this accidentally isn't true, the call to worker_ProcessAddressedPacket will
             // result in redirecting it to here and so on until the call stack overflow. In case of
@@ -1840,6 +1841,14 @@ void srt::CRcvQueue::storePktClone(int32_t id, const CPacket& pkt)
 
         i->second.push(pkt.clone());
     }
+}
+
+void srt::CRcvQueue::removeFromLists(CUDT* u)
+{
+    // the socket must be removed from Hash table first, then RcvUList
+    m_pHash->remove(u->m_SocketID);
+    m_pRcvUList->remove(u);
+    u->m_pRNode->m_bOnList = false;
 }
 
 void srt::CMultiplexer::resetAtFork()

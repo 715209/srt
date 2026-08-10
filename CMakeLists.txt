@@ -8,7 +8,7 @@
 #
 
 cmake_minimum_required (VERSION 3.5 FATAL_ERROR)
-set (SRT_VERSION 1.5.5)
+set (SRT_VERSION 1.5.6)
 
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
 include(CheckSymbolExists)
@@ -122,6 +122,25 @@ endforeach()
 # SRT_MAVG_SAMPLING_RATE 40       /* Max sampling rate */
 # SRT_ENABLE_FREQUENT_LOG_TRACE 0 : set to 1 to enable printing reason for suppressed freq logs
 
+# Blocked by a general enabler, LIBSRT_ENABLE_IMPORT_VARIABLES, to prevent accidental use.
+if ( (DEFINED LIBSRT_ENABLE_IMPORT_VARIABLES) AND (LIBSRT_ENABLE_IMPORT_VARIABLES EQUAL 1))
+	unset(LIBSRT_ENABLE_IMPORT_VARIABLES)
+
+	# CMake offers sometimes OLD behavior, where names that are defined below with
+	# option() function, will be deleted if they are not in cache or do not have set
+	# type - so effectively options provided through LIBSRT_* prefix would be rejected.
+	# We do want these variables, obviously.
+	# NOTE: This is introduced in cmake 3.13, so the namespaced-option feature will not
+	# work properly in the old cmake.
+	if (CMAKE_VERSION VERSION_GREATER 3.12)
+		cmake_policy(SET CMP0077 NEW)
+	endif()
+
+	# Import all options preceded with LIBSRT_ likely from a parent scope.
+	# Names are not being checked, at worst it will set an unused variable.
+	srt_import_parent_options()
+endif()
+
 # option defaults
 set(ENABLE_HEAVY_LOGGING_DEFAULT OFF)
 
@@ -190,7 +209,7 @@ Please use SRT_USE_OPENSSL_STATIC_LIBS instead.")
 endif()
 
 # NOTE: Use ATOMIC_USE_SRT_SYNC_MUTEX and will override the auto-detection of the
-#  Atomic implemetation in srtcore/atomic.h.
+#  Atomic implementation in srtcore/atomic.h.
 option(ATOMIC_USE_SRT_SYNC_MUTEX "Use srt::sync::Mutex to Implement Atomics" OFF)
 if (ATOMIC_USE_SRT_SYNC_MUTEX)
    add_definitions(-DATOMIC_USE_SRT_SYNC_MUTEX=1)
@@ -254,7 +273,7 @@ endif()
 set(USE_ENCLIB "${USE_ENCLIB}" CACHE STRING "The crypto library that SRT uses")
 set_property(CACHE USE_ENCLIB PROPERTY STRINGS "openssl" "openssl-evp" "gnutls" "mbedtls" "botan")
 
-# Make sure DLLs and executabes go to the same path regardles of subdirectory
+# Make sure DLLs and executables go to the same path regardless of subdirectory
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -891,13 +910,24 @@ if (ENABLE_PROFILE)
 endif()
 
 if (ENABLE_CODE_COVERAGE)
-	if (HAVE_COMPILER_GNU_COMPAT)
-		add_definitions(-g -O0 --coverage)
-		link_libraries(--coverage)
-		message(STATUS "ENABLE_CODE_COVERAGE: ON")
-	else()
+	if (NOT HAVE_COMPILER_GNU_COMPAT)
 		message(FATAL_ERROR "ENABLE_CODE_COVERAGE: option is not supported on this platform")
 	endif()
+
+	block()
+	if (ENABLE_DEBUG EQUAL 2)
+	elseif (NOT ENABLE_DEBUG)
+	else()
+		set (is_debug 1)
+	endif()
+	if (NOT is_debug)
+		message(FATAL_ERROR "ENABLE_CODE_COVERAGE: requires ENABLE_DEBUG or Debug build type")
+	endif()
+	endblock()
+
+	add_definitions(--coverage)
+	link_libraries(--coverage)
+	message(STATUS "ENABLE_CODE_COVERAGE: ON")
 endif()
 
 # On Linux pthreads have to be linked even when using C++11 threads
@@ -1374,7 +1404,7 @@ macro(srt_make_application name)
 
 	if (LINUX AND ENABLE_RELATIVE_LIBPATH AND NOT srt_libspec_static)
 		# This is only needed on Linux, on Windows (including Cygwin) the library file will
-		# be placed into the binrary directory anyway.
+		# be placed into the binary directory anyway.
 		# XXX not sure about Mac.
 		# See this name used already in install(${TARGET_srt} LIBRARY DESTINATION...).
 		set(FORCE_RPATH LINK_FLAGS -Wl,-rpath,.,-rpath,../${CMAKE_INSTALL_LIBDIR} BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH_USE_LINK_PATH TRUE)

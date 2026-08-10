@@ -326,7 +326,7 @@ TEST(Bonding, CloseGroupAndSocket)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (srt_send(ss, buf, 1316) == -1)
             {
-                std::cout << "[Sender] sending failure, exitting after sending " << n << " packets\n";
+                std::cout << "[Sender] sending failure, exiting after sending " << n << " packets\n";
                 break;
             }
 
@@ -393,7 +393,7 @@ TEST(Bonding, Options)
     EXPECT_NE(srt_setsockflag(grp, SRTO_PACKETFILTER, packet_filter.c_str(), (int)packet_filter.size()), SRT_ERROR);
 
     // ================
-    // Linger is an option of a trivial type, but differes from other integer-typed options.
+    // Linger is an option of a trivial type, but differs from other integer-typed options.
     // Therefore checking it specifically.
     const linger l = {1, 10};
     srt_setsockflag(grp, SRTO_LINGER, &l, sizeof l);
@@ -530,20 +530,20 @@ TEST(Bonding, Options)
 
 #if SRT_ENABLE_ENCRYPTION
 
-    uint32_t kms = -1;
+    int32_t kms = -1;
 
     EXPECT_NE(srt_getsockflag(grp, SRTO_KMSTATE, &kms, &optsize), SRT_ERROR);
     EXPECT_EQ(optsize, (int) sizeof kms);
-    EXPECT_EQ(kms, int(SRT_KM_S_SECURED));
+    EXPECT_EQ(kms, uint32_t(SRT_KM_S_SECURED));
 
     EXPECT_NE(srt_getsockflag(grp, SRTO_PBKEYLEN, &kms, &optsize), SRT_ERROR);
     EXPECT_EQ(optsize, (int) sizeof kms);
-    EXPECT_EQ(kms, 16);
+    EXPECT_EQ(kms, uint32_t(16));
 
 #ifdef ENABLE_AEAD_API_PREVIEW
     EXPECT_NE(srt_getsockflag(grp, SRTO_CRYPTOMODE, &kms, &optsize), SRT_ERROR);
-    EXPECT_EQ(optsize, sizeof kms);
-    EXPECT_EQ(kms, 1);
+    EXPECT_EQ(optsize, (int) sizeof kms);
+    EXPECT_EQ(kms, uint32_t(SRT_KM_S_SECURING));
 #endif
 #endif
 

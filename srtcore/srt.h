@@ -142,8 +142,10 @@ static const int32_t SRTGROUP_MASK = (1 << 30);
 
 #ifdef _WIN32
    typedef SOCKET SYSSOCKET;
+   static const SYSSOCKET SYSSOCKET_INVALID = INVALID_SOCKET;
 #else
    typedef int SYSSOCKET;
+   static const int SYSSOCKET_INVALID = -1;
 #endif
 
 #ifndef ENABLE_BONDING
@@ -221,7 +223,7 @@ typedef enum SRT_SOCKOPT {
    SRTO_PAYLOADSIZE,         // Maximum payload size sent in one UDP packet (0 if unlimited)
    SRTO_TRANSTYPE = 50,      // Transmission type (set of options required for given transmission type)
    SRTO_KMREFRESHRATE,       // After sending how many packets the encryption key should be flipped to the new key
-   SRTO_KMPREANNOUNCE,       // How many packets before key flip the new key is annnounced and after key flip the old one decommissioned
+   SRTO_KMPREANNOUNCE,       // How many packets before key flip the new key is announced and after key flip the old one decommissioned
    SRTO_ENFORCEDENCRYPTION,  // Connection to be rejected or quickly broken when one side encryption set or bad password
    SRTO_IPV6ONLY,            // IPV6_V6ONLY mode
    SRTO_PEERIDLETIMEO,       // Peer-idle timeout (max time of silence heard from peer) in [ms]
@@ -601,7 +603,7 @@ enum SRT_REJECT_REASON
 #define SRT_LOGFA_CONGEST    7   // cclog: Congestion control module
 #define SRT_LOGFA_PFILTER    8   // pflog: Packet filter module
 
-#define SRT_LOGFA_API_CTRL   11  // aclog: API part for socket and library managmenet
+#define SRT_LOGFA_API_CTRL   11  // aclog: API part for socket and library management
 
 #define SRT_LOGFA_QUE_CTRL   13  // qclog: Queue control activities
 
