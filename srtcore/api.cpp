@@ -3732,6 +3732,14 @@ int srt::CUDT::getGroupData(SRTSOCKET groupid, SRT_SOCKGROUPDATA* pdata, size_t*
 }
 #endif
 
+SRT_EXTERNAL* srt::CUDTUnited::attachExternal(SRTSOCKET u, int wake_fd)
+{
+    SocketKeeper keeper(*this, u);
+    if (!keeper.socket || !keeper.socket->core().m_pSndQueue)
+        return NULL;
+    return keeper.socket->core().m_pSndQueue->m_pChannel->attachExternal(wake_fd);
+}
+
 int srt::CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
 {
     try

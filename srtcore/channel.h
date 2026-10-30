@@ -56,6 +56,7 @@ modified by
 #include "udt.h"
 #include "packet.h"
 #include "socketconfig.h"
+#include "external.h"
 #include "netinet_any.h"
 
 namespace srt
@@ -126,6 +127,12 @@ public:
 
     EReadStatus recvfrom(sockaddr_any& addr, srt::CPacket& packet) const;
 
+    /// Hands the channel's traffic over to the application, for good.
+    /// @param [in] wake_fd See srt_external_attach().
+    /// @return The application's handle, or NULL.
+
+    SRT_EXTERNAL* attachExternal(int wake_fd);
+
     void setConfig(const CSrtMuxerConfig& config);
 
     void getSocketOption(int level, int sockoptname, char* pw_dataptr, socklen_t& w_len, int& w_status);
@@ -166,9 +173,13 @@ public:
 
 private:
     void setUDPSockOpt();
+    EReadStatus recvSocket(sockaddr_any& addr, srt::CPacket& packet) const;
+    EReadStatus recvExternal(SRT_EXTERNAL* external, sockaddr_any& addr, srt::CPacket& packet) const;
+    int sendExternal(SRT_EXTERNAL* external, const sockaddr_any& addr, srt::CPacket& packet) const;
 
 private:
     UDPSOCKET m_iSocket; // socket descriptor
+    sync::atomic<SRT_EXTERNAL*> m_pExternal; // Set: the application is the transport.
 
     // Mutable because when querying original settings
     // this comprises the cache for extracted values,

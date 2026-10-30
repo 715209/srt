@@ -21,6 +21,8 @@ written by
 #include "common.h"
 #include "packet.h"
 #include "core.h"
+#include "api.h"
+#include "external.h"
 #include "utilities.h"
 
 using namespace std;
@@ -118,6 +120,13 @@ void srt_delete_config(SRT_SOCKOPT_CONFIG* in)
 
 // Binding and connection management
 int srt_bind(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::bind(u, name, namelen); }
+
+SRT_EXTERNAL* srt_external_attach(SRTSOCKET u, int wake_fd) { return CUDT::uglobal().attachExternal(u, wake_fd); }
+int srt_external_push(SRT_EXTERNAL* external, const struct sockaddr* from, const char* data, int len) { return external->push(from, data, len) ? 0 : -1; }
+void srt_external_flush(SRT_EXTERNAL* external) { external->flush(); }
+int srt_external_pop(SRT_EXTERNAL* external, struct sockaddr_storage* to, char* data, int cap) { return external->pop(to, data, cap); }
+void srt_external_release(SRT_EXTERNAL* external) { external->release(); }
+
 int srt_bind_acquire(SRTSOCKET u, UDPSOCKET udpsock) { return CUDT::bind(u, udpsock); }
 int srt_listen(SRTSOCKET u, int backlog) { return CUDT::listen(u, backlog); }
 SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr * addr, int * addrlen) { return CUDT::accept(u, addr, addrlen); }

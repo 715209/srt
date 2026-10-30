@@ -520,6 +520,10 @@ public:
 
 private:
 
+public:
+    SRT_EXTERNAL* attachExternal(SRTSOCKET u, int wake_fd);
+
+private:
     void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
     bool updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 

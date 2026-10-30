@@ -761,6 +761,25 @@ SRT_API       int srt_cleanup(void);
 SRT_ATR_DEPRECATED_PX SRT_API SRTSOCKET srt_socket(int, int, int) SRT_ATR_DEPRECATED;
 SRT_API       SRTSOCKET srt_create_socket(void);
 
+// For an application that runs the UDP side itself, in the same process: after
+// srt_bind(), the multiplexer of `u` and of everything accepted from it stops
+// using its socket. Datagrams are fed with srt_external_push(), each with the
+// peer address it counts as coming from, and handed over by srt_external_flush().
+// What SRT sends comes from srt_external_pop(), which returns its length, or 0 if
+// there is nothing. `wake_fd` is written 8 bytes to when pop stops being empty,
+// so it fits an eventfd; it is duplicated, and only needs to live until this
+// returns.
+//
+// Push, flush and pop must all stay on one thread. srt_external_release() is the
+// last call on the handle, and may come before or after srt_close(). Not on Windows.
+#define SRT_EXTERNAL_MAX_DATAGRAM 1500
+typedef struct SRT_EXTERNAL SRT_EXTERNAL;
+SRT_API SRT_EXTERNAL* srt_external_attach(SRTSOCKET u, int wake_fd);
+SRT_API int  srt_external_push(SRT_EXTERNAL* external, const struct sockaddr* from, const char* data, int len);
+SRT_API void srt_external_flush(SRT_EXTERNAL* external);
+SRT_API int  srt_external_pop(SRT_EXTERNAL* external, struct sockaddr_storage* to, char* data, int cap);
+SRT_API void srt_external_release(SRT_EXTERNAL* external);
+
 SRT_API       int srt_bind         (SRTSOCKET u, const struct sockaddr* name, int namelen);
 SRT_API       int srt_bind_acquire (SRTSOCKET u, UDPSOCKET sys_udp_sock);
 // Old name of srt_bind_acquire(), please don't use

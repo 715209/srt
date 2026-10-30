@@ -138,6 +138,7 @@ static int set_cloexec(int fd, int set)
 
 srt::CChannel::CChannel()
     : m_iSocket(INVALID_SOCKET)
+    , m_pExternal(NULL)
 #ifdef SRT_ENABLE_PKTINFO
     , m_bBindMasked(true)
 #endif
@@ -157,7 +158,56 @@ srt::CChannel::CChannel()
 #endif
 }
 
-srt::CChannel::~CChannel() {}
+srt::CChannel::~CChannel()
+{
+    if (SRT_EXTERNAL* external = m_pExternal.load())
+        external->release();
+}
+
+SRT_EXTERNAL* srt::CChannel::attachExternal(int wake_fd)
+{
+#ifdef _WIN32
+    (void)wake_fd;
+    return NULL;
+#else
+    const int fd = ::dup(wake_fd);
+    if (fd == -1)
+        return NULL;
+    SRT_EXTERNAL* external = new SRT_EXTERNAL(fd);
+    external->retain(); // One for the channel, one for the application.
+    m_pExternal.store(external);
+    return external;
+#endif
+}
+
+srt::EReadStatus srt::CChannel::recvExternal(SRT_EXTERNAL* external, sockaddr_any& w_addr, CPacket& w_packet) const
+{
+    size_t len = w_packet.getLength();
+    if (!external->recv(w_addr,
+                        w_packet.m_PacketVector[CPacket::PV_HEADER].data(),
+                        CPacket::HDR_SIZE,
+                        w_packet.m_PacketVector[CPacket::PV_DATA].data(),
+                        (len)))
+    {
+        w_packet.setLength(-1);
+        return RST_AGAIN;
+    }
+    w_packet.setLength(len);
+    w_packet.toHostByteOrder();
+    return RST_OK;
+}
+
+int srt::CChannel::sendExternal(SRT_EXTERNAL* external, const sockaddr_any& addr, CPacket& packet) const
+{
+    packet.toNetworkByteOrder();
+    const int res = external->send(addr,
+                                   packet.m_PacketVector[CPacket::PV_HEADER].data(),
+                                   packet.m_PacketVector[CPacket::PV_HEADER].size(),
+                                   packet.m_PacketVector[CPacket::PV_DATA].data(),
+                                   packet.m_PacketVector[CPacket::PV_DATA].size());
+    packet.toHostByteOrder();
+    return res;
+}
 
 void srt::CChannel::createSocket(int family)
 {
@@ -793,6 +843,9 @@ int srt::CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const socka
 
 #endif
 
+    if (SRT_EXTERNAL* external = m_pExternal.load())
+        return sendExternal(external, addr, packet);
+
     // convert control information into network order
     packet.toNetworkByteOrder();
 
@@ -899,6 +952,13 @@ int srt::CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const socka
 }
 
 srt::EReadStatus srt::CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
+{
+    if (SRT_EXTERNAL* external = m_pExternal.load())
+        return recvExternal(external, w_addr, w_packet);
+    return recvSocket(w_addr, w_packet);
+}
+
+srt::EReadStatus srt::CChannel::recvSocket(sockaddr_any& w_addr, CPacket& w_packet) const
 {
     EReadStatus status    = RST_OK;
     int         msg_flags = 0;

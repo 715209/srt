@@ -7,6 +7,7 @@ buffer_rcv.cpp
 buffer_tools.cpp
 cache.cpp
 channel.cpp
+external.cpp
 common.cpp
 core.cpp
 crypto.cpp
@@ -60,6 +61,7 @@ buffer_rcv.h
 buffer_tools.h
 cache.h
 channel.h
+external.h
 common.h
 core.h
 crypto.h
