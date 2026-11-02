@@ -927,8 +927,10 @@ bool srt::CRcvFreshLoss::removeOne(std::deque<CRcvFreshLoss>& w_container, int32
 
             // Use position of the NEXT element because insertion happens BEFORE pointed element.
             // Use the same TTL (will stay the same in the other one).
-            w_container.insert(w_container.begin() + i + 1,
-                    CRcvFreshLoss(next_begin, next_end, w_container[i].ttl));
+            CRcvFreshLoss upper = w_container[i];
+            upper.seq[0] = next_begin;
+            upper.seq[1] = next_end;
+            w_container.insert(w_container.begin() + i + 1, upper);
         }
         // For STRIPPED:  ... xooo ... => ... ooo ...
         // i.e. there's nothing to do.
@@ -945,4 +947,3 @@ bool srt::CRcvFreshLoss::removeOne(std::deque<CRcvFreshLoss>& w_container, int32
     return false;
 
 }
-

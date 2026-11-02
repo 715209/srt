@@ -136,6 +136,7 @@ extern const SRT_SOCKOPT srt_post_opt_list [SRT_SOCKOPT_NPOST] = {
 #ifdef ENABLE_MAXREXMITBW
     ,SRTO_MAXREXMITBW
 #endif
+    ,SRTO_SRTLAREORDERMS
 };
 
 const int32_t
@@ -187,6 +188,7 @@ struct SrtOptionAction
         flags[SRTO_VERSION]            = SRTO_R_PRE;
         flags[SRTO_CONNTIMEO]          = SRTO_R_PRE;
         flags[SRTO_LOSSMAXTTL]         = SRTO_POST_SPEC;
+        flags[SRTO_SRTLAREORDERMS]     = SRTO_POST_SPEC;
         flags[SRTO_RCVLATENCY]         = SRTO_R_PRE;
         flags[SRTO_PEERLATENCY]        = SRTO_R_PRE;
         flags[SRTO_MINVERSION]         = SRTO_R_PRE;
@@ -432,6 +434,7 @@ void srt::CUDT::construct()
     m_bGroupTsbPd         = false;
     m_bPeerTLPktDrop      = false;
     m_bBufferWasFull      = false;
+    m_iSrtlaReorderLag    = 0;
 
     // Will be updated on first send
 #ifdef ENABLE_MAXREXMITBW
@@ -559,7 +562,14 @@ void srt::CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
 
     // Option execution. If this returns -1, there's no such option.
-    const int status = m_config.set(optName, optval, optlen);
+    int status;
+    if (optName == SRTO_SRTLAREORDERMS)
+    {
+        ScopedLock loss_guard(m_RcvLossLock);
+        status = m_config.set(optName, optval, optlen);
+    }
+    else
+        status = m_config.set(optName, optval, optlen);
     if (status == -1)
     {
         LOGC(aclog.Error, log << CONID() << "OPTION: #" << optName << " UNKNOWN");
@@ -875,6 +885,22 @@ void srt::CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
         *(int32_t*)optval = m_config.iMaxReorderTolerance;
         optlen = sizeof(int32_t);
         break;
+
+    case SRTO_SRTLAREORDERMS:
+        *(int32_t*)optval = m_config.iSrtlaReorderMs;
+        optlen = sizeof(int32_t);
+        break;
+
+    case SRTO_SRTLAREORDERLAG:
+    {
+        if (optlen < int(sizeof(int64_t)))
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        ScopedLock lock(m_RcvLossLock);
+        *(int64_t*)optval = m_iSrtlaReorderLag;
+        m_iSrtlaReorderLag = 0;
+        optlen = sizeof(int64_t);
+        break;
+    }
 
     case SRTO_NAKREPORT:
         *(bool *)optval = m_config.bRcvNakReport;
@@ -10701,6 +10727,7 @@ int srt::CUDT::handleSocketPacketReception(const vector<CUnit*>& incoming, bool&
     {
         CUnit *  u    = *unitIt;
         CPacket &rpkt = u->m_Packet;
+        measureSrtlaReorderLag(rpkt);
         const int pktrexmitflag = m_bPeerRexmitFlag ? (rpkt.getRexmitFlag() ? 1 : 0) : 2;
         const bool retransmitted = pktrexmitflag == 1;
 
@@ -10951,6 +10978,8 @@ int srt::CUDT::processData(CUnit* in_unit)
     if (m_bClosing)
         return -1;
 
+    checkSrtlaReorder(steady_clock::now());
+
     CPacket &packet = in_unit->m_Packet;
 
     // Just heard from the peer, reset the expiration count.
@@ -11045,6 +11074,11 @@ int srt::CUDT::processData(CUnit* in_unit)
     // If the peer doesn't understand REXMIT flag, send rexmit request
     // always immediately.
     int initial_loss_ttl = 0;
+    bool time_reorder = false;
+    {
+        ScopedLock lock(m_RcvLossLock);
+        time_reorder = m_config.bSrtLa && m_config.iSrtlaReorderMs > 0;
+    }
     if (!m_config.bSrtLa && m_bPeerRexmitFlag)
         initial_loss_ttl = m_iReorderTolerance;
     else if (m_config.bSrtLa && m_bPeerRexmitFlag)
@@ -11177,10 +11211,16 @@ int srt::CUDT::processData(CUnit* in_unit)
             for (loss_seqs_t::iterator i = srt_loss_seqs.begin(); i != srt_loss_seqs.end(); ++i)
             {
                 m_pRcvLossList->insert(i->first, i->second);
-                if (initial_loss_ttl)
+                if (initial_loss_ttl || time_reorder)
                 {
                     // The LOSSREPORT will be sent after initial_loss_ttl.
                     m_FreshLoss.push_back(CRcvFreshLoss(i->first, i->second, initial_loss_ttl));
+                    if (time_reorder)
+                    {
+                        if (m_SrtlaLossHistory.size() >= 8192)
+                            m_SrtlaLossHistory.pop_front();
+                        m_SrtlaLossHistory.push_back(m_FreshLoss.back());
+                    }
                 }
             }
         }
@@ -11230,7 +11270,7 @@ int srt::CUDT::processData(CUnit* in_unit)
     if (!srt_loss_seqs.empty())
     {
         const bool report_recorded_loss = !m_PacketFilter || m_PktFilterRexmitLevel == SRT_ARQ_ALWAYS;
-        if (!initial_loss_ttl && report_recorded_loss)
+        if (!initial_loss_ttl && !time_reorder && report_recorded_loss)
         {
             HLOGC(qrlog.Debug, log << CONID() << "WILL REPORT LOSSES (SRT): " << Printable(srt_loss_seqs));
             sendLossReport(srt_loss_seqs);
@@ -11288,7 +11328,7 @@ int srt::CUDT::processData(CUnit* in_unit)
 
         // XXX There was a mysterious crash around m_FreshLoss. When the initial_loss_ttl is 0
         // (that is, "belated loss report" feature is off), don't even touch m_FreshLoss.
-        if (initial_loss_ttl && !m_FreshLoss.empty())
+        if (!time_reorder && initial_loss_ttl && !m_FreshLoss.empty())
         {
             deque<CRcvFreshLoss>::iterator i = m_FreshLoss.begin();
 
@@ -11429,6 +11469,12 @@ void srt::CUDT::unlose(const CPacket &packet)
     ScopedLock lg(m_RcvLossLock);
     int32_t sequence = packet.seqno();
     m_pRcvLossList->remove(sequence);
+
+    if (m_config.bSrtLa && m_config.iSrtlaReorderMs > 0)
+    {
+        CRcvFreshLoss::removeOne(m_FreshLoss, sequence);
+        return;
+    }
 
     // Rest of this code concerns only the "belated lossreport" feature.
 
@@ -12051,8 +12097,55 @@ int srt::CUDT::checkACKTimer(const steady_clock::time_point &currtime)
     return because_decision;
 }
 
+void srt::CUDT::measureSrtlaReorderLag(const CPacket& packet)
+{
+    if (!m_config.bSrtLa || packet.getRexmitFlag())
+        return;
+    const int32_t sequence = packet.seqno();
+    if (CSeqNo::seqcmp(sequence, m_iRcvCurrSeqNo.load()) >= 0)
+        return;
+    ScopedLock lock(m_RcvLossLock);
+    if (m_SrtlaLossHistory.empty() || m_config.iSrtlaReorderMs <= 0)
+        return;
+    const steady_clock::time_point now = steady_clock::now();
+    for (deque<CRcvFreshLoss>::iterator i = m_SrtlaLossHistory.begin(); i != m_SrtlaLossHistory.end(); ++i)
+    {
+        if (CSeqNo::seqcmp(sequence, i->seq[0]) >= 0 && CSeqNo::seqcmp(sequence, i->seq[1]) <= 0)
+        {
+            m_iSrtlaReorderLag = max(m_iSrtlaReorderLag, count_microseconds(now - i->timestamp));
+            CRcvFreshLoss::removeOne(m_SrtlaLossHistory, sequence);
+            if (m_SrtlaLossHistory.size() > 8192)
+                m_SrtlaLossHistory.pop_front();
+            break;
+        }
+    }
+}
+
+void srt::CUDT::checkSrtlaReorder(const steady_clock::time_point& currtime)
+{
+    vector<int32_t> lossdata;
+    {
+        ScopedLock lock(m_RcvLossLock);
+        if (!m_config.bSrtLa || m_config.iSrtlaReorderMs <= 0)
+            return;
+        const steady_clock::duration wait = milliseconds_from(m_config.iSrtlaReorderMs);
+        while (!m_FreshLoss.empty() && currtime - m_FreshLoss.front().timestamp >= wait)
+        {
+            const CRcvFreshLoss& loss = m_FreshLoss.front();
+            addLossRecord(lossdata, loss.seq[0], loss.seq[1]);
+            m_FreshLoss.pop_front();
+        }
+        const steady_clock::duration retain = milliseconds_from(2 * int64_t(m_iTsbPdDelay_ms));
+        while (!m_SrtlaLossHistory.empty() && currtime - m_SrtlaLossHistory.front().timestamp > retain)
+            m_SrtlaLossHistory.pop_front();
+    }
+    if (!lossdata.empty())
+        sendCtrl(UMSG_LOSSREPORT, NULL, &lossdata[0], int(lossdata.size()));
+}
+
 int srt::CUDT::checkNAKTimer(const steady_clock::time_point& currtime)
 {
+    checkSrtlaReorder(currtime);
     // XXX The problem with working NAKREPORT with SRT_ARQ_ONREQ
     // is not that it would be inappropriate, but because it's not
     // implemented. The reason for it is that the structure of the
@@ -12663,5 +12756,3 @@ HandshakeSide CUDT::handshakeSide(SRTSOCKET u)
     return s ? s->core().handshakeSide() : HSD_DRAW;
 }
 }
-
-

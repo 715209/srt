@@ -121,9 +121,9 @@ enum AckDataItem
 const size_t ACKD_FIELD_SIZE = sizeof(int32_t);
 
 #ifdef ENABLE_MAXREXMITBW
-static const size_t SRT_SOCKOPT_NPOST = 13;
+static const size_t SRT_SOCKOPT_NPOST = 14;
 #else
-static const size_t SRT_SOCKOPT_NPOST = 12;
+static const size_t SRT_SOCKOPT_NPOST = 13;
 #endif
 
 extern const SRT_SOCKOPT srt_post_opt_list [];
@@ -840,6 +840,7 @@ private:
     /// removes the loss record from both current receiver loss list and
     /// the receiver fresh loss list.
     void unlose(const CPacket& oldpacket);
+    void measureSrtlaReorderLag(const CPacket& packet);
     void dropFromLossLists(int32_t from, int32_t to);
 
     SRT_ATTR_REQUIRES(m_RecvAckLock)
@@ -1124,6 +1125,10 @@ private: // Receiving related data
     CRcvLossList* m_pRcvLossList;                //< Receiver loss list
     SRT_ATTR_GUARDED_BY(m_RcvLossLock)
     std::deque<CRcvFreshLoss> m_FreshLoss;       //< Lost sequence already added to m_pRcvLossList, but not yet sent UMSG_LOSSREPORT for.
+    SRT_ATTR_GUARDED_BY(m_RcvLossLock)
+    std::deque<CRcvFreshLoss> m_SrtlaLossHistory; // Detection times, including already reported losses.
+    SRT_ATTR_GUARDED_BY(m_RcvLossLock)
+    int64_t m_iSrtlaReorderLag;
 
     int m_iReorderTolerance;                     //< Current value of dynamic reorder tolerance
     int m_iConsecEarlyDelivery;                  //< Increases with every OOO packet that came <TTL-2 time, resets with every increased reorder tolerance
@@ -1382,6 +1387,7 @@ private: // Timers functions
     void considerLegacySrtHandshake(const time_point &timebase);
     int checkACKTimer (const time_point& currtime);
     int checkNAKTimer(const time_point& currtime);
+    void checkSrtlaReorder(const time_point& currtime);
     bool checkExpTimer (const time_point& currtime, int check_reason);  // returns true if the connection is expired
     void checkRexmitTimer(const time_point& currtime);
 
