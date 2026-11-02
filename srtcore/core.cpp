@@ -137,6 +137,7 @@ extern const SRT_SOCKOPT srt_post_opt_list [SRT_SOCKOPT_NPOST] = {
     ,SRTO_MAXREXMITBW
 #endif
     ,SRTO_SRTLAREORDERMS
+    ,SRTO_SRTLARENAK
 };
 
 const int32_t
@@ -189,6 +190,7 @@ struct SrtOptionAction
         flags[SRTO_CONNTIMEO]          = SRTO_R_PRE;
         flags[SRTO_LOSSMAXTTL]         = SRTO_POST_SPEC;
         flags[SRTO_SRTLAREORDERMS]     = SRTO_POST_SPEC;
+        flags[SRTO_SRTLARENAK]         = SRTO_POST_SPEC;
         flags[SRTO_RCVLATENCY]         = SRTO_R_PRE;
         flags[SRTO_PEERLATENCY]        = SRTO_R_PRE;
         flags[SRTO_MINVERSION]         = SRTO_R_PRE;
@@ -563,7 +565,7 @@ void srt::CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
 
     // Option execution. If this returns -1, there's no such option.
     int status;
-    if (optName == SRTO_SRTLAREORDERMS)
+    if (optName == SRTO_SRTLAREORDERMS || optName == SRTO_SRTLARENAK)
     {
         ScopedLock loss_guard(m_RcvLossLock);
         status = m_config.set(optName, optval, optlen);
@@ -888,6 +890,11 @@ void srt::CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
 
     case SRTO_SRTLAREORDERMS:
         *(int32_t*)optval = m_config.iSrtlaReorderMs;
+        optlen = sizeof(int32_t);
+        break;
+
+    case SRTO_SRTLARENAK:
+        *(int32_t*)optval = m_config.iSrtlaRenak;
         optlen = sizeof(int32_t);
         break;
 
@@ -10619,7 +10626,7 @@ void srt::CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> > &
 
     if (!seqbuffer.empty())
     {
-        sendCtrl(UMSG_LOSSREPORT, NULL, &seqbuffer[0], (int) seqbuffer.size());
+        sendSrtlaLossReport(seqbuffer);
     }
 }
 
@@ -11368,7 +11375,7 @@ int srt::CUDT::processData(CUnit* in_unit)
     }
     if (!lossdata.empty())
     {
-        sendCtrl(UMSG_LOSSREPORT, NULL, &lossdata[0], (int) lossdata.size());
+        sendSrtlaLossReport(lossdata);
     }
 
     // was_sent_in_order means either of:
@@ -12097,6 +12104,89 @@ int srt::CUDT::checkACKTimer(const steady_clock::time_point &currtime)
     return because_decision;
 }
 
+void srt::CUDT::sendSrtlaLossReport(vector<int32_t>& losses)
+{
+    if (m_config.bSrtLa)
+    {
+        ScopedLock lock(m_RcvLossLock);
+        if (m_config.iSrtlaRenak > 0)
+        {
+            const time_point now = steady_clock::now();
+            for (size_t i = 0; i < losses.size(); ++i)
+            {
+                const int32_t first = SEQNO_VALUE::unwrap(losses[i]);
+                const int32_t last = (losses[i] & LOSSDATA_SEQNO_RANGE_FIRST) ? losses[++i] : first;
+                if (m_SrtlaRepeatLosses.size() >= 8192)
+                    m_SrtlaRepeatLosses.pop_front();
+                SrtlaRepeatLoss loss = {first, last, now, m_config.iSrtlaRenak};
+                m_SrtlaRepeatLosses.push_back(loss);
+            }
+        }
+    }
+    sendCtrl(UMSG_LOSSREPORT, NULL, &losses[0], int(losses.size()));
+}
+
+void srt::CUDT::checkSrtlaRenak(const time_point& now)
+{
+    vector<int32_t> report;
+    {
+        ScopedLock lock(m_RcvLossLock);
+        if (!m_config.bSrtLa || m_config.iSrtlaRenak == 0 || m_pRcvLossList->getLossLength() == 0)
+        {
+            m_SrtlaRepeatLosses.clear();
+            return;
+        }
+        if (m_SrtlaRepeatLosses.empty())
+            return;
+        loss_seqs_t missing;
+        for (CRcvLossList::iterator i = m_pRcvLossList->begin(); i != m_pRcvLossList->end(); ++i)
+        {
+            pair<int32_t, int32_t> range = *i;
+            if (range.second == SRT_SEQNO_NONE)
+                range.second = range.first;
+            missing.push_back(range);
+        }
+        const steady_clock::duration wait =
+            microseconds_from(max(int64_t(20000), int64_t(m_iSRTT.load()) + 4 * int64_t(m_iRTTVar.load())));
+        for (deque<SrtlaRepeatLoss>::iterator i = m_SrtlaRepeatLosses.begin(); i != m_SrtlaRepeatLosses.end();)
+        {
+            loss_seqs_t::const_iterator j = lower_bound(missing.begin(), missing.end(), i->first,
+                [](const pair<int32_t, int32_t>& range, int32_t seq) {
+                    return CSeqNo::seqcmp(range.second, seq) < 0;
+                });
+            if (j == missing.end() || CSeqNo::seqcmp(j->first, i->last) > 0)
+            {
+                i = m_SrtlaRepeatLosses.erase(i);
+                continue;
+            }
+            if (now - i->sent < wait)
+            {
+                ++i;
+                continue;
+            }
+            for (; j != missing.end() && CSeqNo::seqcmp(j->first, i->last) <= 0; ++j)
+            {
+                const int32_t first = CSeqNo::seqcmp(j->first, i->first) > 0 ? j->first : i->first;
+                const int32_t last = CSeqNo::seqcmp(j->second, i->last) < 0 ? j->second : i->last;
+                addLossRecord(report, first, last);
+            }
+            i->sent = now;
+            if (--i->remaining == 0)
+                i = m_SrtlaRepeatLosses.erase(i);
+            else
+                ++i;
+        }
+    }
+    for (size_t offset = 0; offset < report.size();)
+    {
+        size_t count = min(report.size() - offset, size_t(m_iMaxSRTPayloadSize / sizeof(int32_t)));
+        if (offset + count < report.size() && (report[offset + count - 1] & LOSSDATA_SEQNO_RANGE_FIRST))
+            --count;
+        sendCtrl(UMSG_LOSSREPORT, NULL, &report[offset], int(count));
+        offset += count;
+    }
+}
+
 void srt::CUDT::measureSrtlaReorderLag(const CPacket& packet)
 {
     if (!m_config.bSrtLa || packet.getRexmitFlag())
@@ -12140,12 +12230,13 @@ void srt::CUDT::checkSrtlaReorder(const steady_clock::time_point& currtime)
             m_SrtlaLossHistory.pop_front();
     }
     if (!lossdata.empty())
-        sendCtrl(UMSG_LOSSREPORT, NULL, &lossdata[0], int(lossdata.size()));
+        sendSrtlaLossReport(lossdata);
 }
 
 int srt::CUDT::checkNAKTimer(const steady_clock::time_point& currtime)
 {
     checkSrtlaReorder(currtime);
+    checkSrtlaRenak(currtime);
     // XXX The problem with working NAKREPORT with SRT_ARQ_ONREQ
     // is not that it would be inappropriate, but because it's not
     // implemented. The reason for it is that the structure of the

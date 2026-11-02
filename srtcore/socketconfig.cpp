@@ -580,6 +580,18 @@ struct CSrtConfigSetter<SRTO_SRTLAREORDERMS>
 };
 
 template<>
+struct CSrtConfigSetter<SRTO_SRTLARENAK>
+{
+    static void set(CSrtConfig& co, const void* optval, int optlen)
+    {
+        const int value = cast_optval<int>(optval, optlen);
+        if (value < 0)
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        co.iSrtlaRenak = value;
+    }
+};
+
+template<>
 struct CSrtConfigSetter<SRTO_MINVERSION>
 {
     static void set(CSrtConfig& co, const void* optval, int optlen)
@@ -984,6 +996,7 @@ int dispatchSet(SRT_SOCKOPT optName, CSrtConfig& co, const void* optval, int opt
         DISPATCH(SRTO_DRIFTTRACER);
         DISPATCH(SRTO_LOSSMAXTTL);
         DISPATCH(SRTO_SRTLAREORDERMS);
+        DISPATCH(SRTO_SRTLARENAK);
         DISPATCH(SRTO_MINVERSION);
         DISPATCH(SRTO_STREAMID);
         DISPATCH(SRTO_CONGESTION);
@@ -1084,6 +1097,7 @@ bool SRT_SocketOptionObject::add(SRT_SOCKOPT optname, const void* optval, size_t
         //SRTO_LINGER - not for managed sockets
     case SRTO_LOSSMAXTTL:
     case SRTO_SRTLAREORDERMS:
+    case SRTO_SRTLARENAK:
         //SRTO_MAXBW - per transmission setting
         //SRTO_MESSAGEAPI - groups are live mode only
         //SRTO_MINVERSION - per group connection setting

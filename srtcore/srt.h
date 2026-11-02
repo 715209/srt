@@ -244,6 +244,8 @@ typedef enum SRT_SOCKOPT {
    SRTO_SRTLAREORDERMS = 91, // SRTLA reorder wait in ms; zero uses packet TTL
    SRTO_SRTLAREORDERLAG = 92, // Maximum original-packet lag in us (int64_t), reset on read
 
+   SRTO_SRTLARENAK = 93, // Maximum repeat NAKs per loss; zero disables repeats
+
    SRTO_E_SIZE // Always last element, not a valid option.
 } SRT_SOCKOPT;
 
