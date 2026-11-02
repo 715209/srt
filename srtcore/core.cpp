@@ -12101,10 +12101,12 @@ void srt::CUDT::measureSrtlaReorderLag(const CPacket& packet)
 {
     if (!m_config.bSrtLa || packet.getRexmitFlag())
         return;
-    ScopedLock lock(m_RcvLossLock);
-    if (m_config.iSrtlaReorderMs <= 0)
-        return;
     const int32_t sequence = packet.seqno();
+    if (CSeqNo::seqcmp(sequence, m_iRcvCurrSeqNo.load()) >= 0)
+        return;
+    ScopedLock lock(m_RcvLossLock);
+    if (m_SrtlaLossHistory.empty() || m_config.iSrtlaReorderMs <= 0)
+        return;
     const steady_clock::time_point now = steady_clock::now();
     for (deque<CRcvFreshLoss>::iterator i = m_SrtlaLossHistory.begin(); i != m_SrtlaLossHistory.end(); ++i)
     {
