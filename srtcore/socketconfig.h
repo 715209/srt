@@ -256,6 +256,7 @@ struct CSrtConfig: CSrtMuxerConfig
     bool     bTLPktDrop;    // Whether Agent WILL DO TLPKTDROP on Rx.
     bool     bSrtLa;        // Enable SRTLA-specific behavior toggles.
     int      iSrtlaReorderMs;
+    int      iSrtlaRenak;
     int      iSndDropDelay; // Extra delay when deciding to snd-drop for TLPKTDROP, -1 to off
     bool     bEnforcedEnc;  // Off by default. When on, any connection other than nopw-nopw & pw1-pw1 is rejected.
     int      iGroupConnect;    // 1 - allow group connections
@@ -313,6 +314,7 @@ struct CSrtConfig: CSrtMuxerConfig
         , bTLPktDrop(true)
         , bSrtLa(false)
         , iSrtlaReorderMs(0)
+        , iSrtlaRenak(0)
         , iSndDropDelay(0)
         , bEnforcedEnc(true)
         , iGroupConnect(0)
