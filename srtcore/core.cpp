@@ -12214,7 +12214,7 @@ void srt::CUDT::checkSrtlaRenak(const time_point& now)
     }
     for (size_t offset = 0; offset < report.size();)
     {
-        size_t count = min(report.size() - offset, size_t(m_iMaxSRTPayloadSize / sizeof(int32_t)));
+        size_t count = min(report.size() - offset, size_t(m_iMaxDataPayloadSize / sizeof(int32_t)));
         if (offset + count < report.size() && (report[offset + count - 1] & LOSSDATA_SEQNO_RANGE_FIRST))
             --count;
         sendCtrl(UMSG_LOSSREPORT, NULL, &report[offset], int(count));
